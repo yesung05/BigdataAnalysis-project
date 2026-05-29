@@ -1,0 +1,23 @@
+# Data analysis
+pandas>=2.2
+numpy>=1.26
+pyarrow>=15.0
+
+# File I/O
+openpyxl>=3.1
+
+# Visualization
+streamlit>=1.40
+plotly>=5.24
+matplotlib>=3.8
+seaborn>=0.13
+
+# Map visualization
+pydeck>=0.9
+folium>=0.17
+streamlit-folium>=0.23
+
+# Utilities
+tqdm>=4.66
+python-dotenv>=1.0
+requests>=2.32
