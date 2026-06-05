@@ -1,6 +1,20 @@
-import plotly.express as px
+"""차트 헬퍼 유틸."""
+import streamlit as st
 
-# 재사용 차트 함수 모음
 
-def line_chart(df, x, y, title="라인차트"):
-    return px.line(df, x=x, y=y, title=title)
+def metric_row(items: list):
+    """items: [{label, value, delta?, help?}, ...] → st.columns + st.metric."""
+    cols = st.columns(len(items))
+    for col, item in zip(cols, items):
+        col.metric(
+            label=item["label"],
+            value=item["value"],
+            delta=item.get("delta"),
+            help=item.get("help"),
+        )
+
+
+def section_header(title: str, subtitle: str = ""):
+    st.subheader(title)
+    if subtitle:
+        st.caption(subtitle)
