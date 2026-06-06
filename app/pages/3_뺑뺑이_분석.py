@@ -16,12 +16,12 @@ sys.path.insert(0, str(_APP_DIR))
 from cache import get_dispatch
 
 st.set_page_config(page_title="뺑뺑이 분석", layout="wide")
-st.title("🚨 뺑뺑이 분석")
-st.caption("구급출동(A) 샘플 120,000건 — TRANS2_RSN 기재 여부로 2차 이송 정의")
+st.title("🚨 핵심 문제: 2차 이송(뺑뺑이)")
+st.caption("구급출동(A) 서울 한정 — 어디서·왜 발생하는가 | TRANS2_RSN 기재 여부로 2차 이송 정의")
 
 # ── 데이터 준비 ────────────────────────────────────────────────────────────
 df_raw = get_dispatch()
-df = df_raw.copy()
+df = df_raw[df_raw["GRNDS_CTPV_NM"].str.contains("서울", na=False)].copy()
 df["has_trans2"] = df["TRANS2_RSN"].notna()
 df["has_trans3"] = df["TRANS3_RSN"].notna() if "TRANS3_RSN" in df.columns else False
 df["extra_dist"] = (
@@ -83,7 +83,7 @@ fig1.update_layout(
     hovermode="x unified",
     margin=dict(t=20, b=20),
 )
-st.plotly_chart(fig1, use_container_width=True)
+st.plotly_chart(fig1, width='stretch')
 
 st.divider()
 
@@ -109,7 +109,7 @@ if col_sgg in df.columns:
     fig2.add_vline(x=median_rate, line_dash="dash", line_color="gray",
                    annotation_text=f"중앙값 {median_rate:.2f}%")
     fig2.update_layout(coloraxis_showscale=False, margin=dict(t=20, b=20))
-    st.plotly_chart(fig2, use_container_width=True)
+    st.plotly_chart(fig2, width='stretch')
     st.caption("샘플 200건 이상인 자치구만 표시 | 색이 짙을수록 발생률 높음")
 else:
     st.warning("GRNDS_SGG_NM 컬럼 없음")
@@ -133,7 +133,7 @@ with col1:
         )
         fig3.update_traces(textposition="outside")
         fig3.update_layout(showlegend=False, margin=dict(t=20, b=20))
-        st.plotly_chart(fig3, use_container_width=True)
+        st.plotly_chart(fig3, width='stretch')
     else:
         st.info("거부 이유 데이터 없음")
 
@@ -158,14 +158,23 @@ with col2:
             yaxis_title="건수",
             margin=dict(t=20, b=20),
         )
-        st.plotly_chart(fig4, use_container_width=True)
+        st.plotly_chart(fig4, width='stretch')
     else:
         st.info("추가 거리 데이터 없음")
 
 st.divider()
+
+with st.expander("💡 이 시각화로 알 수 있는 것"):
+    st.markdown("""
+    - **연도별 발생률 V자 패턴**: 2019년 최저(0.11%) → 2021년 최고(0.26%)로 급반등. COVID 이전 개선 흐름이 팬데믹 이후 응급실 혼잡 심화로 역전됐을 가능성이 있습니다.
+    - **자치구별 10배 격차**: 서대문구(0.42%)가 강동구(0.04%) 대비 약 10배 높습니다. 상위권(중구 0.38%, 관악구 0.34%, 은평구 0.33%)은 인근 응급실 수용 역량이 상대적으로 부족한 지역이며, 중앙값(0.17%) 기준으로 절반 이상의 자치구가 낮은 편입니다.
+    - **거부 이유 — '진료 불가'(72건)가 '응급실 포화'(65건)보다 많음**: 단순 병상 부족(15건)보다 전문의 부재·처치 불가 문제가 더 빈번하다는 의미로, 야간·주말 전문의 확보 정책이 필요합니다.
+    - **추가 이동 거리 중앙값 2.0km, 평균 3.4km**: 절반 이상의 뺑뺑이 환자는 2km 이내에서 수용 병원을 찾습니다. 그러나 우측 꼬리(최대 25km)가 길어 일부 환자는 상당히 먼 거리를 이동하며, 이는 골든타임 침해 위험이 큽니다.
+    """)
+
 st.info(
     "**분석 방법론**\n\n"
     "- 2차 이송 정의: `TRANS2_RSN` 컬럼에 값이 기재된 경우\n"
     "- `GRNDS2_DSTNC` 단독 판별 불가 — 정상 이송에도 값이 있음\n"
-    "- 샘플: 20,000행/년 × 6년 = 120,000행 (CSV 상위 행, 서울 편향)"
+    "- 서울(`GRNDS_CTPV_NM` 포함) 필터링 적용"
 )

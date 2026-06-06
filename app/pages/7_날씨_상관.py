@@ -1,4 +1,4 @@
-"""6. 날씨 상관 — Plotly 인터랙티브."""
+"""7. 날씨 상관 — Plotly 인터랙티브."""
 import sys
 from pathlib import Path
 
@@ -17,10 +17,10 @@ sys.path.insert(0, str(_APP_DIR))
 from cache import get_dispatch
 
 st.set_page_config(page_title="날씨 상관", layout="wide")
-st.title("🌡️ 날씨 × 출동 상관 분석")
+st.title("🌡️ 추가 요인: 날씨와 구급 출동")
 st.caption(
-    "구급출동(A) 내장 기상 컬럼(HR_UNIT_*) 활용 — 외부 데이터 JOIN 없음  "
-    "| 일별 집계 Pearson 상관계수"
+    "기온이 오르면 출동이 늘어나는가  "
+    "| 구급출동(A) 서울 한정 — 내장 기상 컬럼(HR_UNIT_*) 일별 집계 Pearson 상관"
 )
 
 WEATHER_COLS = {
@@ -32,8 +32,9 @@ WEATHER_COLS = {
     "HR_UNIT_VSDST": "가시거리(m)",
 }
 
-# ── 일별 집계 ─────────────────────────────────────────────────────────────
+# ── 서울 데이터 필터 + 일별 집계 ──────────────────────────────────────────
 df = get_dispatch()
+df = df[df["GRNDS_CTPV_NM"].str.contains("서울", na=False)]
 date_col = "DCLR_YMD"
 available = [c for c in WEATHER_COLS if c in df.columns]
 
@@ -71,7 +72,7 @@ corr_df["해석"] = corr_df.apply(
     + (" (양의 상관)" if row["r"] > 0.05 else " (음의 상관)" if row["r"] < -0.05 else " (무관)"),
     axis=1,
 )
-st.dataframe(corr_df, use_container_width=True, hide_index=True)
+st.dataframe(corr_df, width='stretch', hide_index=True)
 
 st.divider()
 
@@ -95,7 +96,7 @@ if corrs:
         coloraxis_showscale=False,
         margin=dict(t=20, b=20),
     )
-    st.plotly_chart(fig_corr, use_container_width=True)
+    st.plotly_chart(fig_corr, width='stretch')
 
 st.divider()
 
@@ -129,7 +130,7 @@ if temp_col in daily.columns:
         legend=dict(orientation="h", y=1.08),
         margin=dict(t=40, b=20),
     )
-    st.plotly_chart(fig_sc, use_container_width=True)
+    st.plotly_chart(fig_sc, width='stretch')
 
 # ── 다른 날씨 변수 선택 ───────────────────────────────────────────────────
 st.subheader("다른 날씨 변수 탐색")
@@ -164,9 +165,18 @@ if len(valid2) >= 5:
         legend=dict(orientation="h", y=1.08),
         margin=dict(t=40, b=20),
     )
-    st.plotly_chart(fig2, use_container_width=True)
+    st.plotly_chart(fig2, width='stretch')
+
+with st.expander("💡 이 시각화로 알 수 있는 것"):
+    st.markdown("""
+    - **기온이 유일한 유의미 변수 (r=0.267, p=0.012)**: 6개 날씨 변수 중 기온만 통계적으로 유의합니다. 기온이 높을수록 서울 구급 출동이 증가하는 양의 관계이며, 폭염 시즌 구급 자원 사전 증편의 통계적 근거가 됩니다.
+    - **강수량 r=0.128 (비유의)**: 비가 오는 날 출동이 소폭 많지만 통계적으로 유의하지 않습니다. 낙상·교통사고 증가 효과와 외출 감소 효과가 상쇄되는 것으로 해석됩니다.
+    - **가시거리 r=−0.104 (비유의)**: 안개·미세먼지로 가시거리가 짧은 날 출동이 약간 늘어나는 경향이 있으나 미약합니다.
+    - **적설량·풍속·습도 r≈0**: 서울 기준 이 변수들은 구급 출동 건수와 사실상 무관합니다.
+    - **산점도 분산 큼**: r=0.267은 설명력 약 7%(r²≈0.071)로 날씨 외 요인(요일, 시간대, 행사, 인구 밀도)이 출동 건수를 훨씬 더 크게 결정함을 보여줍니다. 날씨는 보조 변수로 활용해야 합니다.
+    """)
 
 st.warning(
-    "**통계적 한계**: 샘플 기반 일별 집계 — 표본 수가 적어 유의성 제한적.  \n"
-    "기온(r≈+0.267, p<0.05)만 통계적으로 유의하며 나머지는 참고 수준."
+    "**통계적 한계**: 서울 한정 샘플 기반 일별 집계 — 표본 수가 적어 유의성 제한적.  \n"
+    "상관계수는 참고 수준으로 해석 권장."
 )

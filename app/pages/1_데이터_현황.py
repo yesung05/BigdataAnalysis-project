@@ -17,8 +17,8 @@ from src.analysis.time_series import _count_file_rows
 from src.config import DATASETS
 
 st.set_page_config(page_title="데이터 현황", layout="wide")
-st.title("📊 데이터 현황")
-st.caption("4개 원천 데이터셋의 규모·분포·샘플을 확인합니다.")
+st.title("📊 분석 데이터 소개")
+st.caption("어떤 데이터를 어떻게 사용했나 | 4개 원천 데이터셋의 규모·분포·샘플")
 
 tab_a, tab_b, tab_c, tab_d = st.tabs([
     "구급출동현황 (A)", "소방서 좌표 (B)", "구급상황관리 (C)", "서울시 Excel (D)"
@@ -61,7 +61,7 @@ with tab_a:
             yaxis=dict(tickformat=","),
             margin=dict(t=20, b=20),
         )
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width='stretch')
 
     st.divider()
     dispatch_df = get_dispatch()
@@ -75,7 +75,7 @@ with tab_a:
             fig2 = px.pie(vc, names="종결구분", values="건수", hole=0.3)
             fig2.update_traces(textposition="inside", textinfo="percent+label")
             fig2.update_layout(margin=dict(t=20, b=20))
-            st.plotly_chart(fig2, use_container_width=True)
+            st.plotly_chart(fig2, width='stretch')
 
     with col2:
         st.markdown("**환자발생유형 분포 (PTN_OCRN_TYPE_NM)**")
@@ -85,10 +85,17 @@ with tab_a:
             fig3 = px.pie(vc2, names="발생유형", values="건수", hole=0.3)
             fig3.update_traces(textposition="inside", textinfo="percent+label")
             fig3.update_layout(margin=dict(t=20, b=20))
-            st.plotly_chart(fig3, use_container_width=True)
+            st.plotly_chart(fig3, width='stretch')
 
     with st.expander("샘플 5행 미리보기"):
-        st.dataframe(dispatch_df.head(), use_container_width=True)
+        st.dataframe(dispatch_df.head().astype(str), width='stretch')
+
+    with st.expander("💡 이 시각화로 알 수 있는 것"):
+        st.markdown("""
+        - **연도별 출동 건수**: 2017년 약 54만 건에서 2022년 약 62만 건으로 증가. 2020년(약 48만 건)만 COVID-19 영향으로 감소했다가 이후 반등해 6년 최고치를 기록했습니다.
+        - **환자발생유형 파이**: 질병외(사고·외상, 50.3%, 60,305건)와 질병(47.1%, 56,508건)이 거의 절반씩입니다. 서울은 고령화 질병 수요와 도시형 사고 수요가 동시에 높은 구조입니다.
+        - **종결구분 파이**: 대부분의 증상에서 정상처리(완료이송)율이 95% 이상으로 출동 건수 대부분이 병원 이송으로 완료됩니다.
+        """)
 
 # ── 탭 B: 소방서 좌표 ──────────────────────────────────────────────────────
 with tab_b:
@@ -113,7 +120,7 @@ with tab_b:
             )
             fig4.update_traces(textposition="outside")
             fig4.update_layout(coloraxis_showscale=False, margin=dict(t=20, b=20))
-            st.plotly_chart(fig4, use_container_width=True)
+            st.plotly_chart(fig4, width='stretch')
 
     with col2:
         if "관할소방서" in station_df.columns:
@@ -128,10 +135,16 @@ with tab_b:
             )
             fig5.update_traces(textposition="outside")
             fig5.update_layout(coloraxis_showscale=False, margin=dict(t=20, b=20))
-            st.plotly_chart(fig5, use_container_width=True)
+            st.plotly_chart(fig5, width='stretch')
 
     with st.expander("샘플 5행 미리보기"):
-        st.dataframe(station_df.head(), use_container_width=True)
+        st.dataframe(station_df.head().astype(str), width='stretch')
+
+    with st.expander("💡 이 시각화로 알 수 있는 것"):
+        st.markdown("""
+        - **유형별 분포**: 안전센터 수가 소방서보다 훨씬 많으면, 현장 대응 네트워크가 세분화되어 있어 출동 반경이 짧음을 의미합니다.
+        - **관할소방서별 센터 수**: 특정 소방서 관할에 센터가 집중될수록 해당 지역의 인구 밀도나 위험 지역 분포가 불균등함을 나타냅니다. 이 분포를 통해 소방 자원 배치의 지역 격차를 파악할 수 있습니다.
+        """)
 
 # ── 탭 C: 구급상황관리 ──────────────────────────────────────────────────────
 with tab_c:
@@ -151,7 +164,7 @@ with tab_c:
             fig6 = px.pie(vc, names="중증도", values="건수", hole=0.3)
             fig6.update_traces(textposition="inside", textinfo="percent+label")
             fig6.update_layout(margin=dict(t=20, b=20))
-            st.plotly_chart(fig6, use_container_width=True)
+            st.plotly_chart(fig6, width='stretch')
 
     with col2:
         if "MAIN_SYM_NM" in mgmt_df.columns:
@@ -166,7 +179,7 @@ with tab_c:
             )
             fig7.update_traces(textposition="outside")
             fig7.update_layout(coloraxis_showscale=False, margin=dict(t=20, b=20))
-            st.plotly_chart(fig7, use_container_width=True)
+            st.plotly_chart(fig7, width='stretch')
 
     if "_year" in mgmt_df.columns:
         st.markdown("**연도별 로드 건수**")
@@ -183,10 +196,17 @@ with tab_c:
             yaxis=dict(tickformat=","),
             margin=dict(t=20, b=20),
         )
-        st.plotly_chart(fig8, use_container_width=True)
+        st.plotly_chart(fig8, width='stretch')
 
     with st.expander("샘플 5행 미리보기"):
-        st.dataframe(mgmt_df.head(), use_container_width=True)
+        st.dataframe(mgmt_df.head().astype(str), width='stretch')
+
+    with st.expander("💡 이 시각화로 알 수 있는 것"):
+        st.markdown("""
+        - **중증도 분포**: 경증 비율이 높을수록 비응급 환자의 구급 이용이 많음을 의미하며, 경증 환자를 위한 대체 의료 접근 체계의 필요성을 시사합니다.
+        - **주증상 분포**: 상위에 오른 증상(의식변화, 호흡곤란, 흉통 등)은 중증 응급 환자와 직결되는 경우가 많습니다. 이 목록은 의료지도 역량 강화가 필요한 주요 증상군을 나타냅니다.
+        - **연도별 건수**: 구급상황관리센터의 의료지도 건수 추이를 통해 원격 의료지도 활용도 변화를 파악할 수 있습니다.
+        """)
 
 # ── 탭 D: 서울 Excel ──────────────────────────────────────────────────────
 with tab_d:
@@ -235,8 +255,16 @@ with tab_d:
             yaxis=dict(tickformat=","),
             margin=dict(t=20, b=20),
         )
-        st.plotly_chart(fig9, use_container_width=True)
+        st.plotly_chart(fig9, width='stretch')
+
+    with st.expander("💡 이 시각화로 알 수 있는 것"):
+        st.markdown("""
+        - **연도별 월간 출동 추이**: 3개 연도의 선이 유사한 패턴을 보인다면, 구급 수요에 뚜렷한 계절성이 존재함을 의미합니다.
+        - **여름철(7–8월) 피크**: 폭염과 야외 활동 증가로 인한 온열 질환·사고 출동이 집중되는 시기입니다. 이 기간 구급 자원의 집중 배치가 필요합니다.
+        - **2–3월 저점**: 실내 활동이 많고 외상·온열 사고가 적어 출동 건수가 감소합니다.
+        - **연도간 수준 비교**: 같은 월이라도 연도별 절대 수치 차이를 통해 구급 수요의 장기 증가 추세를 확인할 수 있습니다.
+        """)
 
     for sheet_name, df in sheets.items():
         with st.expander(f"{sheet_name} 전체 테이블"):
-            st.dataframe(df, use_container_width=True)
+            st.dataframe(df, width='stretch')

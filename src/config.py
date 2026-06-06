@@ -72,10 +72,15 @@ COLUMN_LABELS = {
     "DAMG_RGN_LOT": "경도",
 }
 
-# 공공데이터 API 키 (있으면 .env 의 FIRE_API_KEY 사용)
+# .env 로드 (프로젝트 루트의 .env 파일에서 환경변수 주입)
 import os
 
-API_KEY = os.getenv("FIRE_API_KEY", "")
+from dotenv import load_dotenv
+
+load_dotenv(PROJECT_ROOT / ".env", override=False)
+
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
+EMER_API_KEY = os.getenv("EMER_API_KEY", "")  # E-Gen 응급의료정보 API
 
 # 대용량 CSV 읽기 기본 청크 크기 (행)
 DEFAULT_CHUNKSIZE = 200_000

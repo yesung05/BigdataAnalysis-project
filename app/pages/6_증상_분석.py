@@ -1,4 +1,4 @@
-"""4. 증상 분석 — Plotly 인터랙티브."""
+"""6. 증상 분석 — Plotly 인터랙티브."""
 import sys
 from pathlib import Path
 
@@ -15,13 +15,14 @@ sys.path.insert(0, str(_APP_DIR))
 from cache import get_dispatch, get_mgmt
 
 st.set_page_config(page_title="증상 분석", layout="wide")
-st.title("🏥 증상 분석")
+st.title("💊 환자 특성 분석")
 st.caption(
-    "구급출동(A) × 구급상황관리(C) 독립 분석  "
-    "| TRMN_SE_NM='정상'이 완료이송 (값 '이송'은 존재하지 않음)"
+    "어떤 환자가 구급차를 이용하고, 어떤 결과를 맞는가  "
+    "| 구급출동(A) 서울 한정 × 구급상황관리(C) 독립 분석"
 )
 
 dispatch_df = get_dispatch()
+dispatch_df = dispatch_df[dispatch_df["GRNDS_CTPV_NM"].str.contains("서울", na=False)]
 mgmt_df = get_mgmt()
 
 # ── 탭 구성 ───────────────────────────────────────────────────────────────
@@ -45,7 +46,7 @@ with tab1:
             hovertemplate="%{label}<br>%{value:,}건 (%{percent})<extra></extra>",
         )
         fig.update_layout(margin=dict(t=30, b=30))
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width='stretch')
     else:
         st.warning(f"{col} 컬럼 없음")
 
@@ -85,7 +86,7 @@ with tab2:
                 xaxis=dict(range=[0, 108]),
                 margin=dict(t=20, b=20),
             )
-            st.plotly_chart(fig2, use_container_width=True)
+            st.plotly_chart(fig2, width='stretch')
         else:
             st.info("조건을 만족하는 증상 없음 — 최소 샘플 수를 낮춰보세요")
     else:
@@ -118,15 +119,24 @@ with tab3:
             aspect="auto",
         )
         fig3.update_layout(margin=dict(t=20, b=20))
-        st.plotly_chart(fig3, use_container_width=True)
+        st.plotly_chart(fig3, width='stretch')
         st.caption("행 정규화 — 각 증상별 중증도 비율(%)을 표시")
     else:
         st.warning(f"{col_sym2} 또는 {col_sev} 컬럼 없음")
 
 st.divider()
+
+with st.expander("💡 이 시각화로 알 수 있는 것"):
+    st.markdown("""
+    - **[탭1] 질병외(50.3%, 60,305건) ≈ 질병(47.1%, 56,508건)**: 거의 절반씩입니다. 외상·사고(질병외)가 질병보다 소폭 많아, 서울 구급 수요가 만성질환뿐 아니라 도시형 사고(낙상, 교통사고 등)에도 상당히 노출돼 있음을 보여줍니다.
+    - **[탭2] 대부분 증상 완료이송율 97–100%**: 거의 모든 증상에서 병원 이송이 이루어집니다. 하단 예외인 '침(삼킴)' 계열(93.3%)과 '기타이외'(95.3%)가 95% 기준선 이하로 비이송 비율이 상대적으로 높습니다.
+    - **[탭3] 저혈당 응급 92.7%, 의식기능저하 응급 81.8%, 흉통 응급 77.8%**: 이 세 증상은 거의 확실하게 응급 판정을 받으며 즉각 이송이 필요합니다.
+    - **[탭3] 무호흡 긴급 69.7% + 지연(사망) 15.8%, 호흡정지 긴급 54.0% + 지연(사망) 27.5%**: 호흡 관련 증상은 현장 도착 시 이미 심각한 상태가 많아 신속 출동과 기도 처치 역량이 직접적으로 생존율에 영향을 줍니다.
+    """)
+
 st.info(
     "**데이터 출처**\n\n"
-    "- **탭 1, 2** — 구급출동(A) 샘플 (PTN_SYM_SE_NM, PTN_OCRN_TYPE_NM, TRMN_SE_NM)\n"
+    "- **탭 1, 2** — 구급출동(A) 서울 한정 (PTN_SYM_SE_NM, PTN_OCRN_TYPE_NM, TRMN_SE_NM)\n"
     "- **탭 3** — 구급상황관리(C) 샘플 (MAIN_SYM_NM, SRIL_CLSF_NM)\n"
     "- 두 데이터셋은 공통 키가 없어 독립 분석"
 )

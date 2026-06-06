@@ -16,8 +16,13 @@ seaborn>=0.13
 pydeck>=0.9
 folium>=0.17
 streamlit-folium>=0.23
+streamlit-js-eval>=0.1.7
+
+# AI
+openai>=1.0
 
 # Utilities
 tqdm>=4.66
 python-dotenv>=1.0
 requests>=2.32
+scipy>=1.10
