@@ -1,182 +1,240 @@
-"""7. 날씨 상관 — Plotly 인터랙티브."""
+"""7. 날씨 상관 — ASOS 서울(108) 관측소 기반."""
+import json
 import sys
 from pathlib import Path
 
 import numpy as np
+import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 import streamlit as st
 from scipy import stats
 
 _PAGES_DIR = Path(__file__).resolve().parent
-_APP_DIR = _PAGES_DIR.parent
-_PROJ_DIR = _APP_DIR.parent
+_APP_DIR   = _PAGES_DIR.parent
+_PROJ_DIR  = _APP_DIR.parent
 sys.path.insert(0, str(_PROJ_DIR))
 sys.path.insert(0, str(_APP_DIR))
 
 from cache import get_dispatch
 
+_ASOS_DIR    = _PROJ_DIR / "data" / "Weather"
+_JSON_PATH   = _PROJ_DIR / "data" / "analytics" / "weather_correlation.json"
+_ASOS_LABELS = ["기온(°C)", "강수량(mm)", "풍속(m/s)", "습도(%)"]
+
 st.set_page_config(page_title="날씨 상관", layout="wide")
 st.title("🌡️ 추가 요인: 날씨와 구급 출동")
 st.caption(
-    "기온이 오르면 출동이 늘어나는가  "
-    "| 구급출동(A) 서울 한정 — 내장 기상 컬럼(HR_UNIT_*) 일별 집계 Pearson 상관"
+    "기온·강수·풍속·습도와 서울 구급 출동 건수의 관계  "
+    "| ASOS 서울(108) 시간별 관측 → 일별 집계 × 구급출동 Pearson 상관"
 )
 
-WEATHER_COLS = {
-    "HR_UNIT_ARTMP": "기온(°C)",
-    "HR_UNIT_RN":    "강수량(mm)",
-    "HR_UNIT_WSPD":  "풍속(m/s)",
-    "HR_UNIT_HUM":   "습도(%)",
-    "HR_UNIT_SNWFL": "적설량(cm)",
-    "HR_UNIT_VSDST": "가시거리(m)",
-}
+# ── 사전 계산 JSON 로드 ────────────────────────────────────────────────────
+@st.cache_data(show_spinner=False)
+def _load_json() -> dict | None:
+    if _JSON_PATH.exists():
+        with open(_JSON_PATH, encoding="utf-8") as f:
+            return json.load(f)
+    return None
 
-# ── 서울 데이터 필터 + 일별 집계 ──────────────────────────────────────────
-df = get_dispatch()
-df = df[df["GRNDS_CTPV_NM"].str.contains("서울", na=False)]
-date_col = "DCLR_YMD"
-available = [c for c in WEATHER_COLS if c in df.columns]
+# ── ASOS + 구급출동 일별 조인 (산점도용) ──────────────────────────────────
+@st.cache_data(show_spinner=False)
+def _build_scatter_data() -> tuple[pd.DataFrame | None, list[str]]:
+    # ① 구급출동 일별 카운트
+    try:
+        df    = get_dispatch()
+        seoul = df[df["GRNDS_CTPV_NM"].str.contains("서울", na=False)]
+        if "DCLR_YMD" not in seoul.columns:
+            return None, []
+        cnt_col = next((c for c in ["RPTP_NO", "GRNDS_SGG_NM", "_year"] if c in seoul.columns), None)
+        if cnt_col is None:
+            return None, []
+        disp = (seoul.groupby("DCLR_YMD")[cnt_col]
+                .count().reset_index()
+                .rename(columns={"DCLR_YMD": "date", cnt_col: "출동건수"}))
+        # 날짜 파싱 (YYYYMMDD·YYYY-MM-DD 모두 처리)
+        disp["date"] = pd.to_datetime(disp["date"].astype(str), errors="coerce")
+        disp = disp.dropna(subset=["date"])
+        disp["date"] = disp["date"].dt.normalize()
+    except Exception:
+        return None, []
 
-if date_col not in df.columns or not available:
-    st.error("날씨 분석에 필요한 컬럼이 없습니다.")
-    st.stop()
+    # ② ASOS 전체 파일 로드 (연도 필터 없이, inner join에서 자동 교집합)
+    frames = []
+    for fp in sorted(_ASOS_DIR.glob("*.csv")):
+        try:
+            adf = pd.read_csv(fp, encoding="cp949", usecols=[2, 3, 5, 7, 11], header=0)
+            adf.columns = ["datetime", "기온(°C)", "강수량(mm)", "풍속(m/s)", "습도(%)"]
+            adf["datetime"] = pd.to_datetime(adf["datetime"], errors="coerce")
+            frames.append(adf.dropna(subset=["datetime"]))
+        except Exception:
+            continue
 
-count_col = "RPTP_NO" if "RPTP_NO" in df.columns else "_year"
-agg_dict = {count_col: "count"}
-agg_dict.update({c: "mean" for c in available})
-daily = df.groupby(date_col).agg(agg_dict).reset_index()
-daily = daily.rename(columns={count_col: "출동건수"})
+    if not frames:
+        return None, []
 
-st.caption(f"일별 집계: {len(daily):,}일 | 날씨 컬럼: {len(available)}개")
+    asos = pd.concat(frames, ignore_index=True)
+    asos["date"] = asos["datetime"].dt.normalize()
+    asos_daily = asos.groupby("date").agg({
+        "기온(°C)":   "mean",
+        "강수량(mm)": "sum",
+        "풍속(m/s)":  "mean",
+        "습도(%)":    "mean",
+    }).reset_index()
 
-# ── 상관계수 계산 ─────────────────────────────────────────────────────────
-corrs = []
-for col, label in WEATHER_COLS.items():
-    if col not in daily.columns:
-        continue
-    valid = daily[[col, "출동건수"]].dropna()
-    if len(valid) < 5:
-        continue
-    r, p = stats.pearsonr(valid[col], valid["출동건수"])
-    corrs.append({"변수": label, "컬럼": col, "r": round(r, 3), "p": round(p, 3)})
+    # ③ inner join — 날짜 타입을 date(not datetime)로 통일 후 병합
+    disp["date"]      = disp["date"].dt.date
+    asos_daily["date"] = asos_daily["date"].dt.date
+    joined = disp.merge(asos_daily, on="date", how="inner")
+    joined["date"] = pd.to_datetime(joined["date"])
 
-corrs_sorted = sorted(corrs, key=lambda x: abs(x["r"]), reverse=True)
+    avail = [c for c in _ASOS_LABELS if c in joined.columns]
+    return (joined if not joined.empty else None), avail
+
+
+wdata = _load_json()
+daily, available = _build_scatter_data()
 
 # ── 상관계수 테이블 ────────────────────────────────────────────────────────
-st.subheader("날씨 변수별 상관계수")
-import pandas as pd
-corr_df = pd.DataFrame(corrs_sorted)[["변수", "r", "p"]]
-corr_df["해석"] = corr_df.apply(
-    lambda row: ("★ 유의" if row["p"] < 0.05 else "비유의")
-    + (" (양의 상관)" if row["r"] > 0.05 else " (음의 상관)" if row["r"] < -0.05 else " (무관)"),
-    axis=1,
-)
-st.dataframe(corr_df, width='stretch', hide_index=True)
+st.subheader("날씨 변수별 Pearson 상관계수")
 
-st.divider()
+if wdata:
+    meta  = wdata.get("meta", {})
+    corrs = wdata.get("correlations", [])
+    years_used = meta.get("years", [])
+    days_n     = meta.get("days_analyzed", 0)
+    st.caption(
+        f"분석 기간: {min(years_used)}~{max(years_used)}년 중 구급출동과 겹치는 **{days_n:,}일**  "
+        f"| 출처: {meta.get('source','ASOS 서울(108)')}"
+    )
 
-# ── 상관계수 막대 ────────────────────────────────────────────────────────
-st.subheader("변수별 상관계수")
-if corrs:
-    corr_plot = pd.DataFrame(corrs_sorted)
-    fig_corr = px.bar(
-        corr_plot.sort_values("r"), x="r", y="변수",
+    corr_df = pd.DataFrame([{
+        "변수":   c["variable"],
+        "r":      c["r"],
+        "r²":     c["r2"],
+        "p":      c["p"],
+        "해석":   ("★ 유의" if c["significant"] else "비유의")
+                 + (" (양의 상관)" if c["r"] > 0.05 else
+                    " (음의 상관)" if c["r"] < -0.05 else " (무관)"),
+    } for c in corrs])
+    st.dataframe(corr_df, width='stretch', hide_index=True)
+
+    # 상관계수 막대 차트
+    fig_bar = px.bar(
+        corr_df.sort_values("r"), x="r", y="변수",
         orientation="h",
         color="r",
         color_continuous_scale=[[0, "#3498db"], [0.5, "#ecf0f1"], [1, "#e74c3c"]],
         color_continuous_midpoint=0,
+        text=corr_df.sort_values("r")["r"].map("{:+.3f}".format),
         labels={"r": "Pearson r", "변수": "날씨 변수"},
-        text=corr_plot.sort_values("r")["r"].map("{:+.3f}".format),
     )
-    fig_corr.add_vline(x=0, line_color="black", line_width=0.8)
-    fig_corr.update_traces(textposition="outside")
-    fig_corr.update_layout(
+    fig_bar.add_vline(x=0, line_color="black", line_width=0.8)
+    fig_bar.update_traces(textposition="outside")
+    fig_bar.update_layout(
         xaxis=dict(range=[-0.5, 0.5]),
         coloraxis_showscale=False,
         margin=dict(t=20, b=20),
     )
-    st.plotly_chart(fig_corr, width='stretch')
+    st.plotly_chart(fig_bar, width='stretch')
+else:
+    st.warning("weather_correlation.json 없음 — `python scripts/generate_analytics.py` 실행 후 새로고침하세요.")
 
 st.divider()
 
-# ── 기온 산점도 + 회귀선 ─────────────────────────────────────────────────
+# ── 산점도 ────────────────────────────────────────────────────────────────
+if daily is None or daily.empty:
+    st.error("ASOS 날씨 데이터를 불러올 수 없습니다.")
+    st.stop()
+
+data_note = f"(ASOS×구급출동 일별 조인 {len(daily):,}일 — 샘플 기반)"
+
+# 기온 산점도 (항상 표시)
 st.subheader("기온 × 일별 출동 건수 산점도")
-temp_col = "HR_UNIT_ARTMP"
-if temp_col in daily.columns:
-    valid = daily[[temp_col, "출동건수", date_col]].dropna()
-    x, y = valid[temp_col].values, valid["출동건수"].values
-    slope, intercept, r_val, p_val, _ = stats.linregress(x, y)
-    x_line = np.linspace(x.min(), x.max(), 100)
+if "기온(°C)" in daily.columns:
+    v = daily[["기온(°C)", "출동건수", "date"]].dropna()
+    x, y = v["기온(°C)"].values, v["출동건수"].values
+    sl, ic, rv, pv, _ = stats.linregress(x, y)
+    xl = np.linspace(x.min(), x.max(), 100)
 
     fig_sc = go.Figure()
     fig_sc.add_trace(go.Scatter(
-        x=valid[temp_col], y=valid["출동건수"],
+        x=v["기온(°C)"], y=v["출동건수"],
         mode="markers",
-        marker=dict(color="#3498db", size=7, opacity=0.6),
-        text=valid[date_col],
+        marker=dict(color="#3498db", size=6, opacity=0.55),
+        text=v["date"].dt.strftime("%Y-%m-%d"),
         hovertemplate="날짜: %{text}<br>기온: %{x:.1f}°C<br>출동: %{y}건<extra></extra>",
         name="일별 데이터",
     ))
     fig_sc.add_trace(go.Scatter(
-        x=x_line, y=slope * x_line + intercept,
+        x=xl, y=sl * xl + ic,
         mode="lines",
         line=dict(color="#e74c3c", width=2),
-        name=f"회귀선 (r={r_val:.3f}, p={p_val:.3f})",
+        name=f"회귀선 (r={rv:.3f}, p={pv:.3f})",
     ))
     fig_sc.update_layout(
         xaxis_title="기온 (°C)",
-        yaxis_title="일별 출동 건수 (샘플)",
+        yaxis_title=f"일별 출동 건수 {data_note}",
         legend=dict(orientation="h", y=1.08),
         margin=dict(t=40, b=20),
     )
     st.plotly_chart(fig_sc, width='stretch')
 
-# ── 다른 날씨 변수 선택 ───────────────────────────────────────────────────
-st.subheader("다른 날씨 변수 탐색")
-var_labels = {v: k for k, v in WEATHER_COLS.items() if k in daily.columns}
-sel_label = st.selectbox("날씨 변수 선택", list(var_labels.keys()))
-sel_col = var_labels[sel_label]
+st.divider()
 
-valid2 = daily[[sel_col, "출동건수", date_col]].dropna()
-if len(valid2) >= 5:
-    x2, y2 = valid2[sel_col].values, valid2["출동건수"].values
-    slope2, intercept2, r2, p2, _ = stats.linregress(x2, y2)
-    x_line2 = np.linspace(x2.min(), x2.max(), 100)
+# 변수 선택 산점도
+st.subheader("날씨 변수 탐색")
+if available:
+    sel = st.selectbox("날씨 변수 선택", available)
+    v2  = daily[[sel, "출동건수", "date"]].dropna()
+    if len(v2) >= 5:
+        x2, y2 = v2[sel].values, v2["출동건수"].values
+        sl2, ic2, rv2, pv2, _ = stats.linregress(x2, y2)
+        xl2 = np.linspace(x2.min(), x2.max(), 100)
 
-    fig2 = go.Figure()
-    fig2.add_trace(go.Scatter(
-        x=valid2[sel_col], y=valid2["출동건수"],
-        mode="markers",
-        marker=dict(color="#9b59b6", size=7, opacity=0.6),
-        text=valid2[date_col],
-        hovertemplate=f"날짜: %{{text}}<br>{sel_label}: %{{x:.2f}}<br>출동: %{{y}}건<extra></extra>",
-        name="일별 데이터",
-    ))
-    fig2.add_trace(go.Scatter(
-        x=x_line2, y=slope2 * x_line2 + intercept2,
-        mode="lines",
-        line=dict(color="#e74c3c", width=2),
-        name=f"회귀선 (r={r2:.3f}, p={p2:.3f})",
-    ))
-    fig2.update_layout(
-        xaxis_title=sel_label,
-        yaxis_title="일별 출동 건수 (샘플)",
-        legend=dict(orientation="h", y=1.08),
-        margin=dict(t=40, b=20),
-    )
-    st.plotly_chart(fig2, width='stretch')
+        fig2 = go.Figure()
+        fig2.add_trace(go.Scatter(
+            x=v2[sel], y=v2["출동건수"],
+            mode="markers",
+            marker=dict(color="#9b59b6", size=6, opacity=0.55),
+            text=v2["date"].dt.strftime("%Y-%m-%d"),
+            hovertemplate=f"날짜: %{{text}}<br>{sel}: %{{x:.2f}}<br>출동: %{{y}}건<extra></extra>",
+            name="일별 데이터",
+        ))
+        fig2.add_trace(go.Scatter(
+            x=xl2, y=sl2 * xl2 + ic2,
+            mode="lines",
+            line=dict(color="#e74c3c", width=2),
+            name=f"회귀선 (r={rv2:.3f}, p={pv2:.3f})",
+        ))
+        fig2.update_layout(
+            xaxis_title=sel,
+            yaxis_title=f"일별 출동 건수 {data_note}",
+            legend=dict(orientation="h", y=1.08),
+            margin=dict(t=40, b=20),
+        )
+        st.plotly_chart(fig2, width='stretch')
+
+st.divider()
 
 with st.expander("💡 이 시각화로 알 수 있는 것"):
-    st.markdown("""
-    - **기온이 유일한 유의미 변수 (r=0.267, p=0.012)**: 6개 날씨 변수 중 기온만 통계적으로 유의합니다. 기온이 높을수록 서울 구급 출동이 증가하는 양의 관계이며, 폭염 시즌 구급 자원 사전 증편의 통계적 근거가 됩니다.
-    - **강수량 r=0.128 (비유의)**: 비가 오는 날 출동이 소폭 많지만 통계적으로 유의하지 않습니다. 낙상·교통사고 증가 효과와 외출 감소 효과가 상쇄되는 것으로 해석됩니다.
-    - **가시거리 r=−0.104 (비유의)**: 안개·미세먼지로 가시거리가 짧은 날 출동이 약간 늘어나는 경향이 있으나 미약합니다.
-    - **적설량·풍속·습도 r≈0**: 서울 기준 이 변수들은 구급 출동 건수와 사실상 무관합니다.
-    - **산점도 분산 큼**: r=0.267은 설명력 약 7%(r²≈0.071)로 날씨 외 요인(요일, 시간대, 행사, 인구 밀도)이 출동 건수를 훨씬 더 크게 결정함을 보여줍니다. 날씨는 보조 변수로 활용해야 합니다.
-    """)
+    if wdata and wdata.get("correlations"):
+        c_map = {c["variable"]: c for c in wdata["correlations"]}
+        r_tmp  = c_map.get("기온(°C)",   {}).get("r", 0)
+        r_hum  = c_map.get("습도(%)",    {}).get("r", 0)
+        r_rain = c_map.get("강수량(mm)", {}).get("r", 0)
+        r_wind = c_map.get("풍속(m/s)",  {}).get("r", 0)
+        st.markdown(f"""
+- **기온 r={r_tmp:+.3f} (유의)**: 기온이 높을수록 서울 구급 출동이 증가합니다. 폭염 시즌 구급 자원 사전 증편의 통계적 근거입니다.
+- **습도 r={r_hum:+.3f} (유의)**: 습도가 높을수록 출동이 증가하는 경향이 있습니다. 여름철 고온다습 환경과 연관됩니다.
+- **강수량 r={r_rain:+.3f} (유의)**: 비 오는 날 출동이 소폭 늘어납니다. 낙상·교통사고 증가 효과가 외출 감소 효과를 약간 상회합니다.
+- **풍속 r={r_wind:+.3f} (유의)**: 바람이 강할수록 출동이 소폭 감소합니다. 강풍 시 외출 자체가 줄어드는 효과로 해석됩니다.
+- **설명력(r²)**: 기온 기준 r²≈{r_tmp**2:.3f}로 날씨 외 요인(요일·시간대·행사·인구)이 출동 건수를 더 크게 결정합니다.
+        """)
+    else:
+        st.markdown("analytics JSON 로드 후 해석이 표시됩니다.")
 
-st.warning(
-    "**통계적 한계**: 서울 한정 샘플 기반 일별 집계 — 표본 수가 적어 유의성 제한적.  \n"
-    "상관계수는 참고 수준으로 해석 권장."
+st.info(
+    f"**데이터 출처**: ASOS 서울(108) 시간별 관측 데이터  "
+    f"| 구급출동 CSV와 겹치는 연도({', '.join(str(y) for y in (wdata or {}).get('meta', {}).get('years', []))}) 기준"
 )
