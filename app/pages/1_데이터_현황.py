@@ -12,7 +12,7 @@ _PROJ_DIR = _APP_DIR.parent
 sys.path.insert(0, str(_PROJ_DIR))
 sys.path.insert(0, str(_APP_DIR))
 
-from cache import get_dispatch, get_mgmt, get_seoul_excel, get_station_coords
+from cache import _load_analytics, get_dispatch, get_mgmt, get_seoul_excel, get_station_coords
 from src.analysis.time_series import _count_file_rows
 from src.config import DATASETS
 
@@ -64,29 +64,30 @@ with tab_a:
         st.plotly_chart(fig, width='stretch')
 
     st.divider()
-    dispatch_df = get_dispatch()
+    _trmn = _load_analytics("trmn_distribution")
+    _occ  = _load_analytics("occurrence_type")
 
-    col1, col2 = st.columns(2)
-    with col1:
-        st.markdown("**종결구분 분포 (TRMN_SE_NM)**")
-        if "TRMN_SE_NM" in dispatch_df.columns:
-            vc = dispatch_df["TRMN_SE_NM"].value_counts().reset_index()
-            vc.columns = ["종결구분", "건수"]
-            fig2 = px.pie(vc, names="종결구분", values="건수", hole=0.3)
+    if _trmn and _occ:
+        col1, col2 = st.columns(2)
+        with col1:
+            st.markdown("**종결구분 분포 (TRMN_SE_NM)**")
+            trmn_df = pd.DataFrame(_trmn["distribution"]).rename(columns={"label": "종결구분", "count": "건수"})
+            fig2 = px.pie(trmn_df, names="종결구분", values="건수", hole=0.3)
             fig2.update_traces(textposition="inside", textinfo="percent+label")
             fig2.update_layout(margin=dict(t=20, b=20))
             st.plotly_chart(fig2, width='stretch')
-
-    with col2:
-        st.markdown("**환자발생유형 분포 (PTN_OCRN_TYPE_NM)**")
-        if "PTN_OCRN_TYPE_NM" in dispatch_df.columns:
-            vc2 = dispatch_df["PTN_OCRN_TYPE_NM"].value_counts().reset_index()
-            vc2.columns = ["발생유형", "건수"]
-            fig3 = px.pie(vc2, names="발생유형", values="건수", hole=0.3)
+        with col2:
+            st.markdown("**환자발생유형 분포 (PTN_OCRN_TYPE_NM)**")
+            occ_df = pd.DataFrame(_occ["types"]).rename(columns={"type": "발생유형", "count": "건수"})
+            fig3 = px.pie(occ_df, names="발생유형", values="건수", hole=0.3)
             fig3.update_traces(textposition="inside", textinfo="percent+label")
             fig3.update_layout(margin=dict(t=20, b=20))
             st.plotly_chart(fig3, width='stretch')
+        st.caption("전체 330만 건 기반 (2017–2022)")
+    else:
+        st.warning("analytics JSON 없음 — `python scripts/generate_analytics.py` 실행 후 새로고침하세요.")
 
+    dispatch_df = get_dispatch()
     with st.expander("샘플 5행 미리보기"):
         st.dataframe(dispatch_df.head().astype(str), width='stretch')
 
@@ -149,56 +150,45 @@ with tab_b:
 # ── 탭 C: 구급상황관리 ──────────────────────────────────────────────────────
 with tab_c:
     st.subheader("구급상황관리현황 (C)")
-    mgmt_df = get_mgmt()
+    _mgmt = _load_analytics("mgmt_summary")
+    if _mgmt:
+        c1, c2 = st.columns(2)
+        total_mgmt = sum(y["count"] for y in _mgmt["yearly"])
+        c1.metric("전체 건수", f"{total_mgmt:,}행")
+        c2.metric("분석 연도", f"{min(y['year'] for y in _mgmt['yearly'])} – {max(y['year'] for y in _mgmt['yearly'])}")
 
-    c1, c2 = st.columns(2)
-    c1.metric("로드 샘플 수", f"{len(mgmt_df):,}행")
-    c2.metric("분석 연도", "2019 – 2023")
+        col1, col2 = st.columns(2)
+        with col1:
+            if _mgmt.get("severity"):
+                st.markdown("**중증도 분포**")
+                sev_df = pd.DataFrame(_mgmt["severity"]).rename(columns={"label": "중증도", "count": "건수"})
+                fig6 = px.pie(sev_df, names="중증도", values="건수", hole=0.3)
+                fig6.update_traces(textposition="inside", textinfo="percent+label")
+                fig6.update_layout(margin=dict(t=20, b=20))
+                st.plotly_chart(fig6, width='stretch')
+        with col2:
+            if _mgmt.get("top_symptoms"):
+                st.markdown("**주증상 분포 (상위 15개)**")
+                sym_df = pd.DataFrame(_mgmt["top_symptoms"][:15]).rename(columns={"symptom": "주증상", "count": "건수"})
+                sym_df = sym_df.sort_values("건수")
+                fig7 = px.bar(sym_df, x="건수", y="주증상", orientation="h", color="건수", color_continuous_scale="Oranges", text="건수")
+                fig7.update_traces(textposition="outside")
+                fig7.update_layout(coloraxis_showscale=False, margin=dict(t=20, b=20))
+                st.plotly_chart(fig7, width='stretch')
 
-    col1, col2 = st.columns(2)
-    with col1:
-        if "SRIL_CLSF_NM" in mgmt_df.columns:
-            st.markdown("**중증도 분포**")
-            vc = mgmt_df["SRIL_CLSF_NM"].value_counts().reset_index()
-            vc.columns = ["중증도", "건수"]
-            fig6 = px.pie(vc, names="중증도", values="건수", hole=0.3)
-            fig6.update_traces(textposition="inside", textinfo="percent+label")
-            fig6.update_layout(margin=dict(t=20, b=20))
-            st.plotly_chart(fig6, width='stretch')
-
-    with col2:
-        if "MAIN_SYM_NM" in mgmt_df.columns:
-            st.markdown("**주증상 분포 (상위 15개)**")
-            vc2 = mgmt_df["MAIN_SYM_NM"].value_counts().head(15).reset_index()
-            vc2.columns = ["주증상", "건수"]
-            fig7 = px.bar(
-                vc2.sort_values("건수"), x="건수", y="주증상",
-                orientation="h", color="건수",
-                color_continuous_scale="Oranges",
-                text="건수",
-            )
-            fig7.update_traces(textposition="outside")
-            fig7.update_layout(coloraxis_showscale=False, margin=dict(t=20, b=20))
-            st.plotly_chart(fig7, width='stretch')
-
-    if "_year" in mgmt_df.columns:
-        st.markdown("**연도별 로드 건수**")
-        yr_vc = mgmt_df["_year"].value_counts().sort_index().reset_index()
-        yr_vc.columns = ["연도", "건수"]
-        fig8 = px.bar(
-            yr_vc, x="연도", y="건수",
-            text=yr_vc["건수"].map("{:,}".format),
-            color_discrete_sequence=["#2ecc71"],
-        )
-        fig8.update_traces(textposition="outside")
-        fig8.update_layout(
-            xaxis=dict(type="category"),
-            yaxis=dict(tickformat=","),
-            margin=dict(t=20, b=20),
-        )
-        st.plotly_chart(fig8, width='stretch')
+        if _mgmt.get("yearly"):
+            st.markdown("**연도별 건수**")
+            yr_df = pd.DataFrame(_mgmt["yearly"])
+            fig8 = px.bar(yr_df, x="year", y="count", text=yr_df["count"].map("{:,}".format), color_discrete_sequence=["#2ecc71"])
+            fig8.update_traces(textposition="outside")
+            fig8.update_layout(xaxis=dict(type="category"), yaxis=dict(tickformat=","), margin=dict(t=20, b=20))
+            st.plotly_chart(fig8, width='stretch')
+        st.caption("전체 구급상황관리 CSV 기반 (2019–2023)")
+    else:
+        st.warning("analytics JSON 없음 — `python scripts/generate_analytics.py` 실행 후 새로고침하세요.")
 
     with st.expander("샘플 5행 미리보기"):
+        mgmt_df = get_mgmt()
         st.dataframe(mgmt_df.head().astype(str), width='stretch')
 
     with st.expander("💡 이 시각화로 알 수 있는 것"):

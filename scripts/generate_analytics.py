@@ -7,7 +7,7 @@ data/analytics/*.json 파일로 저장합니다.
 실행 (프로젝트 루트에서):
     python scripts/generate_analytics.py
 
-생성 파일 (12개):
+생성 파일 (15개):
     district_transfer.json   자치구별 2차 이송률      (전체 CSV)
     station_load.json        안전센터 출동 순위        (전체 CSV)
     seasonal_demand.json     계절·월·시간대별 출동 패턴 (전체 CSV)
@@ -20,6 +20,9 @@ data/analytics/*.json 파일로 저장합니다.
     weather_correlation.json 기상변수 × 출동건수 상관   (ASOS 서울 시간별 관측, 구급CSV와 겹치는 연도)
     call_types.json          119신고유형 연도별 추이    (정적 CSV)
     occurrence_type.json     환자 발생유형 분포         (전체 CSV)
+    trmn_distribution.json   종결구분 분포              (전체 CSV)
+    mgmt_summary.json        구급상황관리 요약           (전체 mgmt CSV)
+    weather_daily.json       일별 출동건수 × ASOS 날씨  (전체 CSV × ASOS)
 """
 from __future__ import annotations
 
@@ -85,6 +88,8 @@ extra_dists: list[float] = []
 occ_cnt: dict    = defaultdict(int)
 sym_complete: dict = defaultdict(lambda: {"done": 0, "total": 0})
 weather_records: list[dict] = []
+trmn_cnt: dict = defaultdict(int)      # 종결구분 분포
+trans3_total: int = 0                   # 3차 이송 총계
 
 years_processed: list[int] = []
 
@@ -161,6 +166,16 @@ for year in cfg["years"]:
     if "TRANS2_RSN" in df.columns:
         year_cnt[year]["t"] += int(has_t2.sum())
 
+    # ── 종결구분 집계 ────────────────────────────────────────────────────
+    if "TRMN_SE_NM" in df.columns:
+        for v, c in df["TRMN_SE_NM"].dropna().value_counts().items():
+            trmn_cnt[v] += int(c)
+
+    # ── 3차 이송 집계 ────────────────────────────────────────────────────
+    if "TRANS3_RSN" in df.columns:
+        trans3_total += int(df["TRANS3_RSN"].notna().sum())
+        year_cnt[year]["t3"] = year_cnt[year].get("t3", 0) + int(df["TRANS3_RSN"].notna().sum())
+
     # ── 2차 이송 거부 이유 + 거리 ─────────────────────────────────────────
     if "TRANS2_RSN" in df.columns:
         trans2 = df[has_t2]
@@ -222,6 +237,10 @@ MGMT_WANT = ["MAIN_SYM_NM", "SRIL_CLSF_NM"]
 symptom_sev: dict = defaultdict(lambda: defaultdict(int))  # sym -> {class -> count}
 mgmt_years: list[int] = []
 
+mgmt_severity: dict = defaultdict(int)
+mgmt_symptom_top: dict = defaultdict(int)
+mgmt_year_cnt: dict = defaultdict(int)
+
 for year in mgmt_cfg["years"]:
     fpath = mgmt_cfg["dir"] / f"구급상황관리 현황_{year}_전국.csv"
     if not fpath.exists():
@@ -235,6 +254,14 @@ for year in mgmt_cfg["years"]:
     mdf = pd.read_csv(fpath, usecols=usecols, encoding=mgmt_cfg["encoding"], low_memory=False)
     print(f"{len(mdf):,}행")
     mgmt_years.append(year)
+
+    mgmt_year_cnt[year] += len(mdf)
+    if "SRIL_CLSF_NM" in mdf.columns:
+        for v, c in mdf["SRIL_CLSF_NM"].dropna().value_counts().items():
+            mgmt_severity[v] += int(c)
+    if "MAIN_SYM_NM" in mdf.columns:
+        for v, c in mdf["MAIN_SYM_NM"].dropna().value_counts().items():
+            mgmt_symptom_top[v] += int(c)
 
     for sym, grp in mdf.dropna(subset=MGMT_WANT).groupby("MAIN_SYM_NM"):
         for cls, cnt in grp["SRIL_CLSF_NM"].value_counts().items():
@@ -336,6 +363,15 @@ if weather_records:
         _asos_days = len(_joined)
         print(f"    → 겹침 일수: {_asos_days}일")
 
+        # weather_daily 저장용 데이터 수집
+        weather_daily_records = []
+        for _, _row in _joined.iterrows():
+            _rec = {"date": str(_row["date"]) if hasattr(_row["date"], "strftime") else str(_row["date"]), "count": int(_row["count"])}
+            for _lbl in _ASOS_WEATHER_KEYS:
+                if _lbl in _row.index and pd.notna(_row[_lbl]):
+                    _rec[_lbl] = round(float(_row[_lbl]), 3)
+            weather_daily_records.append(_rec)
+
         for label in _ASOS_WEATHER_KEYS:
             valid = _joined[["count", label]].dropna()
             if len(valid) >= 10 and valid[label].std() > 0:
@@ -349,6 +385,19 @@ if weather_records:
                 })
     else:
         print("    → 겹치는 ASOS 파일 없음, 기상 상관 건너뜀")
+        weather_daily_records = []
+else:
+    weather_daily_records = []
+
+# 히스토그램 빈 계산
+hist_bins = []
+if extra_dists:
+    _arr = np.array(extra_dists).clip(0, 50)
+    _counts, _edges = np.histogram(_arr, bins=20)
+    hist_bins = [
+        {"x0": round(float(_edges[i]), 2), "x1": round(float(_edges[i+1]), 2), "count": int(_counts[i])}
+        for i in range(len(_counts))
+    ]
 
 # ── 응급실 × 2차이송 상관 ────────────────────────────────────────────────
 print("  [상관] 응급실수 × 2차이송률 계산 중...")
@@ -461,8 +510,9 @@ save("seasonal_demand", {
 
 # 4. yearly_trend.json
 yearly = sorted(
-    [{"year": yr, "dispatches": v["d"], "transfers": v["t"],
-      "transfer_rate_pct": round(v["t"] / v["d"] * 100, 4) if v["d"] > 0 else 0}
+    [{"year": yr, "dispatches": v["d"], "transfers": v["t"], "transfers3": v.get("t3", 0),
+      "transfer_rate_pct": round(v["t"] / v["d"] * 100, 4) if v["d"] > 0 else 0,
+      "transfer3_rate_pct": round(v.get("t3", 0) / v["d"] * 100, 4) if v["d"] > 0 else 0}
      for yr, v in year_cnt.items()],
     key=lambda x: x["year"]
 )
@@ -495,6 +545,7 @@ save("transfer_analysis", {
     "meta": {"years": years_processed},
     "reasons": reasons_list,
     "distance_km": dist_stats,
+    "distance_hist": hist_bins,
 })
 
 # 6. er_locations.json
@@ -527,16 +578,17 @@ save("symptom_severity", {
 })
 
 # 9. dispatch_completion.json
-comp_list = []
+comp_list_all = []
 for sym, stats in sym_complete.items():
-    if stats["total"] >= 50:
+    if stats["total"] >= 10:
         rate = round(stats["done"] / stats["total"] * 100, 2)
-        comp_list.append({"symptom": sym, "completion_rate_pct": rate, "count": stats["total"]})
-comp_list.sort(key=lambda x: -x["completion_rate_pct"])
+        comp_list_all.append({"symptom": sym, "completion_rate_pct": rate, "count": stats["total"]})
+comp_list_all.sort(key=lambda x: -x["completion_rate_pct"])
 save("dispatch_completion", {
-    "meta": {"years": years_processed},
-    "top_completion":    comp_list[:15],
-    "bottom_completion": list(reversed(comp_list[-15:])),
+    "meta": {"years": years_processed, "min_count": 10},
+    "symptoms": comp_list_all,
+    "top_completion": comp_list_all[:15],
+    "bottom_completion": list(reversed(comp_list_all[-15:])),
 })
 
 # 10. weather_correlation.json
@@ -568,5 +620,30 @@ save("occurrence_type", {
     "types": occ_list,
 })
 
-print("\n✅ 모든 analytics JSON 생성 완료.")
+# 13. trmn_distribution.json
+trmn_total_cnt = sum(trmn_cnt.values())
+save("trmn_distribution", {
+    "meta": {"years": years_processed, "total": trmn_total_cnt},
+    "distribution": sorted(
+        [{"label": k, "count": v, "pct": round(v / trmn_total_cnt * 100, 2) if trmn_total_cnt else 0}
+         for k, v in trmn_cnt.items()],
+        key=lambda x: -x["count"]
+    ),
+})
+
+# 14. mgmt_summary.json
+save("mgmt_summary", {
+    "meta": {"years": mgmt_years},
+    "severity": sorted([{"label": k, "count": v} for k, v in mgmt_severity.items()], key=lambda x: -x["count"]),
+    "top_symptoms": sorted([{"symptom": k, "count": v} for k, v in mgmt_symptom_top.items()], key=lambda x: -x["count"])[:25],
+    "yearly": sorted([{"year": yr, "count": cnt} for yr, cnt in mgmt_year_cnt.items()], key=lambda x: x["year"]),
+})
+
+# 15. weather_daily.json
+save("weather_daily", {
+    "meta": {"days": len(weather_daily_records), "source": "ASOS 서울(108) × 구급출동 전체 CSV 일별 조인"},
+    "daily": weather_daily_records,
+})
+
+print("\n[완료] 모든 analytics JSON 생성 완료.")
 print(f"   출력 디렉토리: {OUT_DIR}")

@@ -330,6 +330,17 @@ def get_er_locations():
     return pd.read_csv(path, encoding="cp949")
 
 
+@st.cache_data(show_spinner=False)
+def _load_analytics(name: str) -> dict:
+    import json
+    from src.config import DATA_DIR
+    path = DATA_DIR / "analytics" / f"{name}.json"
+    if not path.exists():
+        return {}
+    with open(path, encoding="utf-8") as f:
+        return json.load(f)
+
+
 @st.cache_data(show_spinner="전체 CSV에서 안전센터 집계 중… (최초 1회)")
 def get_center_counts():
     import pandas as pd

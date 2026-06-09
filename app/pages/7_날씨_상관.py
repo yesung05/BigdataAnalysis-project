@@ -16,7 +16,7 @@ _PROJ_DIR  = _APP_DIR.parent
 sys.path.insert(0, str(_PROJ_DIR))
 sys.path.insert(0, str(_APP_DIR))
 
-from cache import get_dispatch
+from cache import _load_analytics
 
 _ASOS_DIR    = _PROJ_DIR / "data" / "Weather"
 _JSON_PATH   = _PROJ_DIR / "data" / "analytics" / "weather_correlation.json"
@@ -37,59 +37,17 @@ def _load_json() -> dict | None:
             return json.load(f)
     return None
 
-# ── ASOS + 구급출동 일별 조인 (산점도용) ──────────────────────────────────
+# ── weather_daily JSON에서 산점도 데이터 로드 ─────────────────────────────
 @st.cache_data(show_spinner=False)
 def _build_scatter_data() -> tuple[pd.DataFrame | None, list[str]]:
-    # ① 구급출동 일별 카운트
-    try:
-        df    = get_dispatch()
-        seoul = df[df["GRNDS_CTPV_NM"].str.contains("서울", na=False)]
-        if "DCLR_YMD" not in seoul.columns:
-            return None, []
-        cnt_col = next((c for c in ["RPTP_NO", "GRNDS_SGG_NM", "_year"] if c in seoul.columns), None)
-        if cnt_col is None:
-            return None, []
-        disp = (seoul.groupby("DCLR_YMD")[cnt_col]
-                .count().reset_index()
-                .rename(columns={"DCLR_YMD": "date", cnt_col: "출동건수"}))
-        # 날짜 파싱 (YYYYMMDD·YYYY-MM-DD 모두 처리)
-        disp["date"] = pd.to_datetime(disp["date"].astype(str), errors="coerce")
-        disp = disp.dropna(subset=["date"])
-        disp["date"] = disp["date"].dt.normalize()
-    except Exception:
+    data = _load_analytics("weather_daily")
+    if not data or not data.get("daily"):
         return None, []
-
-    # ② ASOS 전체 파일 로드 (연도 필터 없이, inner join에서 자동 교집합)
-    frames = []
-    for fp in sorted(_ASOS_DIR.glob("*.csv")):
-        try:
-            adf = pd.read_csv(fp, encoding="cp949", usecols=[2, 3, 5, 7, 11], header=0)
-            adf.columns = ["datetime", "기온(°C)", "강수량(mm)", "풍속(m/s)", "습도(%)"]
-            adf["datetime"] = pd.to_datetime(adf["datetime"], errors="coerce")
-            frames.append(adf.dropna(subset=["datetime"]))
-        except Exception:
-            continue
-
-    if not frames:
-        return None, []
-
-    asos = pd.concat(frames, ignore_index=True)
-    asos["date"] = asos["datetime"].dt.normalize()
-    asos_daily = asos.groupby("date").agg({
-        "기온(°C)":   "mean",
-        "강수량(mm)": "sum",
-        "풍속(m/s)":  "mean",
-        "습도(%)":    "mean",
-    }).reset_index()
-
-    # ③ inner join — 날짜 타입을 date(not datetime)로 통일 후 병합
-    disp["date"]      = disp["date"].dt.date
-    asos_daily["date"] = asos_daily["date"].dt.date
-    joined = disp.merge(asos_daily, on="date", how="inner")
-    joined["date"] = pd.to_datetime(joined["date"])
-
-    avail = [c for c in _ASOS_LABELS if c in joined.columns]
-    return (joined if not joined.empty else None), avail
+    df = pd.DataFrame(data["daily"])
+    df["date"] = pd.to_datetime(df["date"], errors="coerce")
+    df = df.rename(columns={"count": "출동건수"})
+    avail = [c for c in _ASOS_LABELS if c in df.columns]
+    return df if not df.empty else None, avail
 
 
 wdata = _load_json()
@@ -147,7 +105,7 @@ if daily is None or daily.empty:
     st.error("ASOS 날씨 데이터를 불러올 수 없습니다.")
     st.stop()
 
-data_note = f"(ASOS×구급출동 일별 조인 {len(daily):,}일 — 샘플 기반)"
+data_note = f"(ASOS×구급출동 일별 조인 {len(daily):,}일 — 전체 CSV 기반)"
 
 # 기온 산점도 (항상 표시)
 st.subheader("기온 × 일별 출동 건수 산점도")
